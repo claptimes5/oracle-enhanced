@@ -745,4 +745,161 @@ describe "OracleEnhancedAdapter" do
       expect(@employee.order(:sort_order).offset(4).first.first_name.should).to eq("Natasha")
     end
   end
+
+  describe "maintains default scope bindings through associations" do
+    class Employee < ActiveRecord::Base
+      self.table_name = :test_employees
+
+      default_scope { where(enabled_p: 't') }
+
+      has_many :roles, through: :employee_roles
+      has_many :employee_roles
+
+      has_many :related_employees,
+               primary_key: :id,
+               foreign_key: :employee_id
+      has_many :subordinates,
+               through: :related_employees,
+               source: :employee
+    end
+
+    class RelatedEmployee < ActiveRecord::Base
+      self.table_name = :test_related_employees
+
+      default_scope { where(enabled_p: 't') }
+
+      belongs_to :employee,
+                 primary_key: :id,
+                 foreign_key: :related_employee_id
+    end
+
+    class Role < ActiveRecord::Base
+      self.table_name = :test_roles
+
+      default_scope { where(enabled_p: 't') }
+
+      has_many :employees, through: :employee_roles
+      has_many :employee_roles
+
+      has_many :subordinates, through: :employees
+    end
+
+    class EmployeeRole < ActiveRecord::Base
+      self.table_name = :test_employee_roles
+
+      default_scope { where(enabled_p: 't') }
+
+      belongs_to :employee
+      belongs_to :role
+    end
+
+    def setup_employees(conn)
+      conn.execute "DROP TABLE test_employees" rescue nil
+      conn.execute <<-SQL
+        CREATE TABLE test_employees (
+          id            NUMBER PRIMARY KEY,
+          first_name    VARCHAR2(20),
+          last_name     VARCHAR2(25),
+          enabled_p     char(1),
+          updated_at    DATE,
+          created_at    DATE
+        )
+      SQL
+      conn.execute "DROP SEQUENCE test_employees_seq" rescue nil
+      conn.execute <<-SQL
+        CREATE SEQUENCE test_employees_seq  MINVALUE 1
+          INCREMENT BY 1 START WITH 1 CACHE 20 NOORDER NOCYCLE
+      SQL
+
+      Employee.create!(first_name: 'Peter',   last_name: 'Parker', enabled_p: 't')
+      Employee.create!(first_name: 'John',   last_name: 'Parker', enabled_p: 't')
+    end
+
+    def setup_roles(conn)
+      conn.execute "DROP TABLE test_roles" rescue nil
+      conn.execute <<-SQL
+        CREATE TABLE test_roles (
+          id            NUMBER PRIMARY KEY,
+          name          VARCHAR2(20),
+          enabled_p     char(1),
+          updated_at    DATE,
+          created_at    DATE
+        )
+      SQL
+      conn.execute "DROP SEQUENCE test_roles_seq" rescue nil
+      conn.execute <<-SQL
+        CREATE SEQUENCE test_roles_seq  MINVALUE 1
+          INCREMENT BY 1 START WITH 1 CACHE 20 NOORDER NOCYCLE
+      SQL
+      Role.create!(name: 'Admin Role', enabled_p: 't')
+    end
+
+    def setup_employee_roles(conn)
+      conn.execute "DROP TABLE test_employee_roles" rescue nil
+      conn.execute <<-SQL
+        CREATE TABLE test_employee_roles (
+          id            NUMBER PRIMARY KEY,
+          employee_id   NUMBER,
+          role_id       NUMBER,
+          enabled_p     char(1),
+          updated_at    DATE,
+          created_at    DATE
+        )
+      SQL
+      conn.execute "DROP SEQUENCE test_employee_roles_seq" rescue nil
+      conn.execute <<-SQL
+        CREATE SEQUENCE test_employee_roles_seq  MINVALUE 1
+          INCREMENT BY 1 START WITH 1 CACHE 20 NOORDER NOCYCLE
+      SQL
+    end
+
+    def setup_related_employees(conn)
+      conn.execute "DROP TABLE test_related_employees" rescue nil
+      conn.execute <<-SQL
+        CREATE TABLE test_related_employees (
+          id            NUMBER PRIMARY KEY,
+          employee_id   NUMBER,
+          related_employee_id       NUMBER,
+          enabled_p     char(1),
+          updated_at    DATE,
+          created_at    DATE
+        )
+      SQL
+      conn.execute "DROP SEQUENCE test_related_employees_seq" rescue nil
+      conn.execute <<-SQL
+        CREATE SEQUENCE test_related_employees_seq  MINVALUE 1
+          INCREMENT BY 1 START WITH 1 CACHE 20 NOORDER NOCYCLE
+      SQL
+    end
+
+    before(:all) do
+      @conn = ActiveRecord::Base.connection
+      setup_employees(@conn)
+      setup_roles(@conn)
+      setup_employee_roles(@conn)
+      setup_related_employees(@conn)
+      EmployeeRole.create!(employee_id: Employee.first.id, role_id: Role.first.id, enabled_p: 't')
+      RelatedEmployee.create!(employee_id: Employee.first.id, related_employee_id: Employee.last.id, enabled_p: 't')
+    end
+
+    after(:all) do
+      @conn.execute "DROP TABLE test_employees"
+      @conn.execute "DROP SEQUENCE test_employees_seq"
+      @conn.execute "DROP TABLE test_roles"
+      @conn.execute "DROP SEQUENCE test_roles_seq"
+      @conn.execute "DROP TABLE test_employee_roles"
+      @conn.execute "DROP SEQUENCE test_employee_roles_seq"
+      @conn.execute "DROP SEQUENCE test_related_employees"
+      @conn.execute "DROP SEQUENCE test_related_employees_seq"
+    end
+
+    after(:each) do
+      ActiveRecord::Base.connection.clear_ignored_table_columns
+      ActiveRecord::Base.clear_cache! if ActiveRecord::Base.respond_to?(:"clear_cache!")
+    end
+
+    it "returns the first subordinate of the first role" do
+      puts Role.first.subordinates.first
+    end
+  end
 end
